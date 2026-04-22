@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Chat UI</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .chat-container {
+            width: 420px;
+            height: 600px;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            background: #4285f4;
+            color: #fff;
+            padding: 16px 20px;
+            font-size: 16px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #ff4444;
+            transition: background 0.3s;
+        }
+
+        .status-dot.connected { background: #00cc66; }
+
+        .chat-messages {
+            flex: 1;
+            padding: 16px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .message {
+            max-width: 75%;
+            padding: 10px 14px;
+            border-radius: 18px;
+            font-size: 14px;
+            line-height: 1.5;
+            word-wrap: break-word;
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background: #4285f4;
+            color: #fff;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.bot {
+            align-self: flex-start;
+            background: #f0f2f5;
+            color: #1a1a1a;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message.system {
+            align-self: center;
+            background: transparent;
+            color: #999;
+            font-size: 12px;
+        }
+
+        .typing-indicator {
+            align-self: flex-start;
+            background: #f0f2f5;
+            border-radius: 18px;
+            border-bottom-left-radius: 4px;
+            padding: 12px 16px;
+            display: none;
+        }
+
+        .typing-indicator span {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #aaa;
+            animation: bounce 1.2s infinite;
+            margin: 0 2px;
+        }
+
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% { transform: translateY(0); }
+            40%            { transform: translateY(-6px); }
+        }
+
+        .chat-input-area {
+            display: flex;
+            padding: 12px 16px;
+            gap: 10px;
+            border-top: 1px solid #eee;
+        }
+
+        .chat-input-area input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 1px solid #ddd;
+            border-radius: 24px;
+            font-size: 14px;
+            outline: none;
+            transition: border 0.2s;
+        }
+
+        .chat-input-area input:focus { border-color: #4285f4; }
+
+        .chat-input-area button {
+            padding: 10px 20px;
+            background: #4285f4;
+            color: #fff;
+            border: none;
+            border-radius: 24px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .chat-input-area button:hover    { background: #3367d6; }
+        .chat-input-area button:disabled { background: #aaa; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+
+<div class="chat-container">
+    <div class="chat-header">
+        <div class="status-dot" id="statusDot"></div>
+        <span>Chat Assistant</span>
+    </div>
+
+    <div class="chat-messages" id="chatMessages">
+        <div class="message system">Connecting to server...</div>
+
+        <div class="typing-indicator" id="typingIndicator">
+            <span></span><span></span><span></span>
+        </div>
+    </div>
+
+    <div class="chat-input-area">
+        <input
+            type="text"
+            id="messageInput"
+            placeholder="Type a message..."
+            disabled
+        />
+        <button id="sendBtn" disabled>Send</button>
+    </div>
+</div>
+
+<script>
+    const chatMessages  = document.getElementById('chatMessages');
+    const messageInput  = document.getElementById('messageInput');
+    const sendBtn       = document.getElementById('sendBtn');
+    const statusDot     = document.getElementById('statusDot');
+    const typingIndicator = document.getElementById('typingIndicator');
+
+    let socket;
+    let sessionId = 'session-' + Math.random().toString(36).substr(2, 9);
+
+    function connect() {
+        socket = new WebSocket('ws://localhost:3000');
+
+        socket.onopen = () => {
+            statusDot.classList.add('connected');
+            messageInput.disabled = false;
+            sendBtn.disabled      = false;
+            addMessage('Connected! How can I help you?', 'bot');
+        };
+
+        socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+
+            hideTyping();
+
+            if (data.type === 'bot_response') {
+                addMessage(data.message, 'bot');
+            } else if (data.type === 'error') {
+                addMessage('Error: ' + data.message, 'system');
+            }
+        };
+
+        socket.onclose = () => {
+            statusDot.classList.remove('connected');
+            messageInput.disabled = true;
+            sendBtn.disabled      = true;
+            addMessage('Disconnected. Reconnecting in 3s...', 'system');
+
+            // Auto-reconnect
+            setTimeout(connect, 3000);
+        };
+
+        socket.onerror = (err) => {
+            console.error('WebSocket error:', err);
+        };
+    }
+
+    function sendMessage() {
+        const text = messageInput.value.trim();
+        if (!text || socket.readyState !== WebSocket.OPEN) return;
+
+        addMessage(text, 'user');
+        showTyping();
+
+        socket.send(JSON.stringify({
+            type:      'user_message',
+            message:   text,
+            sessionId: sessionId,
+        }));
+
+        messageInput.value = '';
+    }
+
+    function addMessage(text, type) {
+        // Move typing indicator to bottom
+        const typing = document.getElementById('typingIndicator');
+
+        const div = document.createElement('div');
+        div.classList.add('message', type);
+        div.textContent = text;
+
+        chatMessages.insertBefore(div, typing);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function showTyping() {
+        typingIndicator.style.display = 'block';
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function hideTyping() {
+        typingIndicator.style.display = 'none';
+    }
+
+    // Send on button click
+    sendBtn.addEventListener('click', sendMessage);
+
+    // Send on Enter key
+    messageInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') sendMessage();
+    });
+
+    // Start connection
+    connect();
+</script>
+
+</body>
+</html>
